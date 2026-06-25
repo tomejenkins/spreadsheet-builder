@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowRight, Check, Clock, FileSpreadsheet, Lock, Mail, ShieldCheck, Sparkles, Wrench, XCircle } from 'lucide-react';
+import { ArrowRight, Check, Clock, FileSpreadsheet, ShieldCheck, Sparkles, Wrench, XCircle } from 'lucide-react';
 import './styles.css';
 
 type PackageKey = 'quick-fix' | 'spreadsheet-cleanup' | 'dashboard-repair' | 'starter-build';
