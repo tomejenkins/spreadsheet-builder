@@ -1,81 +1,73 @@
 import { json } from '../_lib/http';
-import { createEmptyPaidJob } from '../_lib/jobs';
-import { notifyAdmin } from '../_lib/notifications';
+import { getWebhookEvent, insertJobEvent, insertWebhookEvent, markWebhookProcessed, upsertJobBySession, upsertPackages } from '../_lib/supabase';
 
-type Env = {
-  STRIPE_WEBHOOK_SECRET: string;
-  JOBS_KV: KVNamespace;
-  ADMIN_NOTIFICATION_EMAIL?: string;
-  RESEND_API_KEY?: string;
-  SENDGRID_API_KEY?: string;
-  SLACK_WEBHOOK_URL?: string;
-  PUBLIC_SITE_URL?: string;
-};
+type Env = { STRIPE_WEBHOOK_SECRET: string; SUPABASE_URL: string; SUPABASE_SECRET_KEY: string };
 
 type StripeSession = {
   id: string;
-  object: 'checkout.session';
   payment_intent?: string;
+  customer?: string;
   customer_details?: { email?: string; name?: string };
   customer_email?: string;
   amount_total?: number;
+  currency?: string;
   payment_status?: 'paid' | 'unpaid' | 'no_payment_required';
   metadata?: Record<string, string>;
 };
 
 type StripeEvent = { id: string; type: string; data: { object: StripeSession } };
-
 const encoder = new TextEncoder();
 const hex = (buffer: ArrayBuffer) => [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-
-const safeEqual = (a: string, b: string) => {
-  if (a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i += 1) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return mismatch === 0;
-};
+const safeEqual = (a: string, b: string) => a.length === b.length && [...a].reduce((ok, char, index) => ok && char === b[index], true);
 
 const verifyStripeSignature = async (payload: string, signatureHeader: string | null, secret: string) => {
   if (!signatureHeader || !secret) return false;
-  const parts = Object.fromEntries(signatureHeader.split(',').map((part) => {
+  const signatures = signatureHeader.split(',').reduce<Record<string, string[]>>((acc, part) => {
     const [key, value] = part.split('=');
-    return [key, value];
-  }));
-  const timestamp = parts.t;
-  const signature = parts.v1;
-  if (!timestamp || !signature) return false;
-
+    acc[key] = [...(acc[key] || []), value];
+    return acc;
+  }, {});
+  const timestamp = signatures.t?.[0];
+  const v1 = signatures.v1 || [];
+  if (!timestamp || !v1.length) return false;
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const signedPayload = `${timestamp}.${payload}`;
-  const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(signedPayload));
-  return safeEqual(hex(digest), signature);
+  const digest = hex(await crypto.subtle.sign('HMAC', key, encoder.encode(`${timestamp}.${payload}`)));
+  return v1.some((signature) => safeEqual(digest, signature));
 };
 
-export const onRequestPost: PagesFunction<Env> = async ({ request, env, waitUntil }) => {
+export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (!env.STRIPE_WEBHOOK_SECRET) return json({ error: 'Webhook secret is not configured.' }, 500);
-
   const rawBody = await request.text();
   const verified = await verifyStripeSignature(rawBody, request.headers.get('stripe-signature'), env.STRIPE_WEBHOOK_SECRET);
   if (!verified) return json({ error: 'Invalid Stripe signature.' }, 400);
 
   const event = JSON.parse(rawBody) as StripeEvent;
+  const existingEvent = await getWebhookEvent(env, event.id);
+  if (existingEvent?.processed_at) return json({ received: true, duplicate: true });
+  if (!existingEvent) await insertWebhookEvent(env, { id: event.id, provider: 'stripe', event_type: event.type, payload: event });
+
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
-    const job = await createEmptyPaidJob(env, {
-      checkoutSessionId: session.id,
-      paymentIntent: session.payment_intent,
-      customerEmail: session.customer_details?.email || session.customer_email,
-      customerName: session.customer_details?.name,
-      amountTotal: session.amount_total,
-      paymentStatus: session.payment_status === 'paid' ? 'paid' : 'pending',
-      packageId: session.metadata?.package_id,
-      packageName: session.metadata?.package_name,
-      packagePrice: session.metadata?.package_price,
-      packageType: session.metadata?.package_type,
+    await upsertPackages(env);
+    const job = await upsertJobBySession(env, {
+      stripe_checkout_session_id: session.id,
+      stripe_payment_intent_id: session.payment_intent,
+      stripe_customer_id: session.customer,
+      customer_email: session.customer_details?.email || session.customer_email,
+      customer_name: session.customer_details?.name,
+      amount_paid_cents: session.amount_total,
+      currency: session.currency || 'usd',
+      payment_status: session.payment_status === 'paid' ? 'paid' : 'unpaid',
+      status: 'paid_no_intake',
+      package_id: session.metadata?.package_id,
+      package_name: session.metadata?.package_name,
+      package_type: session.metadata?.package_type,
+      source: 'website',
     });
-    waitUntil(notifyAdmin(env, job, 'Payment received'));
+    await insertJobEvent(env, job?.id, 'payment_completed', { stripe_event_id: event.id, session });
   }
 
+  await markWebhookProcessed(env, event.id);
   return json({ received: true });
 };
 

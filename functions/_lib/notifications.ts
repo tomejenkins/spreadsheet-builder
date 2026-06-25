@@ -1,71 +1,48 @@
-import type { JobRecord } from './jobs';
+import { insertJobEvent, type JobRow, type SupabaseEnv } from './supabase';
 
-type NotificationEnv = {
-  ADMIN_NOTIFICATION_EMAIL?: string;
-  RESEND_API_KEY?: string;
-  SENDGRID_API_KEY?: string;
-  SLACK_WEBHOOK_URL?: string;
-  PUBLIC_SITE_URL?: string;
+type NotificationEnv = SupabaseEnv & {
+  GOOGLE_APPS_SCRIPT_EMAIL_WEBHOOK_URL?: string;
+  EMAIL_NOTIFICATION_SECRET?: string;
 };
 
-const money = (amount?: number) => (amount ? `$${(amount / 100).toFixed(2)}` : 'Unknown');
+export const notifyIntakeSubmitted = async (env: NotificationEnv, job: JobRow) => {
+  if (!env.GOOGLE_APPS_SCRIPT_EMAIL_WEBHOOK_URL) return;
 
-const jobSummary = (job: JobRecord) => {
-  const adminUrl = job.checkoutSessionId ? `${job.checkoutSessionId}` : job.id;
-  return [
-    `Job ID: ${job.id}`,
-    `Status: ${job.jobStatus}`,
-    `Package: ${job.packageName || job.packageId || 'Unknown'}`,
-    `Amount paid: ${money(job.amountTotal)}`,
-    `Customer: ${job.customerName || 'Unknown'} <${job.customerEmail || 'unknown'}>`,
-    job.phone ? `Phone: ${job.phone}` : undefined,
-    job.spreadsheetPlatform ? `Platform: ${job.spreadsheetPlatform}` : undefined,
-    job.desiredDeadline ? `Deadline: ${job.desiredDeadline}` : undefined,
-    job.fileLink ? `File/access link: ${job.fileLink}` : undefined,
-    job.projectDescription ? `Project: ${job.projectDescription}` : undefined,
-    job.brokenOrBuildDetails ? `Details: ${job.brokenOrBuildDetails}` : undefined,
-    job.scopeReviewReasons?.length ? `Scope review: ${job.scopeReviewReasons.join('; ')}` : undefined,
-    `Stripe checkout session: ${job.checkoutSessionId}`,
-    `Admin lookup: ${adminUrl}`,
-  ].filter(Boolean).join('\n');
-};
+  const payload = {
+    secret: env.EMAIL_NOTIFICATION_SECRET,
+    event_type: 'intake_submitted',
+    job_id: job.id,
+    package_name: job.package_name,
+    amount_paid_cents: job.amount_paid_cents,
+    customer_name: job.customer_name,
+    customer_email: job.customer_email,
+    customer_phone: job.customer_phone,
+    business_name: job.business_name,
+    spreadsheet_platform: job.spreadsheet_platform,
+    desired_deadline: job.desired_deadline,
+    project_description: job.project_description,
+    broken_or_needed_details: job.broken_or_needed_details,
+    file_link: job.file_link,
+    access_notes: job.access_notes,
+    scope_review_required: job.scope_review_required,
+    stripe_checkout_session_id: job.stripe_checkout_session_id,
+  };
 
-export const notifyAdmin = async (env: NotificationEnv, job: JobRecord, subjectPrefix = 'Spreadsheet job update') => {
-  const subject = `${subjectPrefix}: ${job.packageName || job.packageId || 'Unknown package'}${job.jobStatus === 'Needs Scope Review' ? ' — needs scope review' : ''}`;
-  const text = jobSummary(job);
-  const tasks: Promise<Response>[] = [];
-
-  if (env.SLACK_WEBHOOK_URL) {
-    tasks.push(fetch(env.SLACK_WEBHOOK_URL, {
+  try {
+    const response = await fetch(env.GOOGLE_APPS_SCRIPT_EMAIL_WEBHOOK_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: `*${subject}*\n\n\`\`\`\n${text}\n\`\`\`` }),
-    }));
+      headers: {
+        'content-type': 'application/json',
+        ...(env.EMAIL_NOTIFICATION_SECRET ? { 'x-notification-secret': env.EMAIL_NOTIFICATION_SECRET } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) throw new Error(`Google Apps Script webhook failed: ${response.status}`);
+  } catch (error) {
+    console.error('Notification failed', error);
+    await insertJobEvent(env, job.id, 'notification_failed', {
+      message: error instanceof Error ? error.message : 'Unknown notification error',
+    });
   }
-
-  if (env.ADMIN_NOTIFICATION_EMAIL && env.RESEND_API_KEY) {
-    tasks.push(fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        from: 'Spreadsheet Fixer <notifications@thomas-jenkins.net>',
-        to: [env.ADMIN_NOTIFICATION_EMAIL],
-        subject,
-        text,
-      }),
-    }));
-  } else if (env.ADMIN_NOTIFICATION_EMAIL && env.SENDGRID_API_KEY) {
-    tasks.push(fetch('https://api.sendgrid.com/v3/mail/send', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.SENDGRID_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        personalizations: [{ to: [{ email: env.ADMIN_NOTIFICATION_EMAIL }] }],
-        from: { email: 'notifications@thomas-jenkins.net', name: 'Spreadsheet Fixer' },
-        subject,
-        content: [{ type: 'text/plain', value: text }],
-      }),
-    }));
-  }
-
-  await Promise.allSettled(tasks);
 };

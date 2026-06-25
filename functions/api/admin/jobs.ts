@@ -1,16 +1,14 @@
 import { json } from '../../_lib/http';
-import { listJobs } from '../../_lib/jobs';
+import { listAdminJobs } from '../../_lib/supabase';
 
-type Env = { JOBS_KV: KVNamespace; ADMIN_API_TOKEN?: string };
+type Env = { SUPABASE_URL: string; SUPABASE_SECRET_KEY: string; ADMIN_PASSWORD?: string };
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
-  if (env.ADMIN_API_TOKEN) {
+  if (env.ADMIN_PASSWORD) {
     const auth = request.headers.get('authorization');
-    if (auth !== `Bearer ${env.ADMIN_API_TOKEN}`) return json({ error: 'Unauthorized.' }, 401);
+    if (auth !== `Bearer ${env.ADMIN_PASSWORD}`) return json({ error: 'Unauthorized.' }, 401);
   }
-
-  const jobs = await listJobs(env, 100);
-  return json({ jobs });
+  return json({ jobs: await listAdminJobs(env, 100) });
 };
 
 export const onRequest: PagesFunction<Env> = async () => json({ error: 'Method not allowed.' }, 405);

@@ -1,128 +1,134 @@
 # Spreadsheet Fixer
 
-A production-ready Vite + React + TypeScript landing page, Stripe Checkout flow, intake form, webhook handler, and simple Cloudflare KV-backed job queue for a spreadsheet repair / dashboard build service at `thomas-jenkins.net`.
+A Vite + React + TypeScript landing page for a transparent paid-package spreadsheet repair and dashboard/tracker build service. The backend runs on Cloudflare Pages Functions, uses Stripe Checkout for payment, stores jobs/payments/intake in Supabase, can notify through a Google Apps Script Gmail webhook, and exposes a protected export endpoint for a private Google Sheet job queue.
 
-## Overview
+## Architecture
 
-Spreadsheet Fixer helps small businesses repair Excel and Google Sheets files, build dashboards and trackers, and scope spreadsheet automations or connected-data workflows. This version intentionally uses transparent package-based pricing instead of an AI quoter.
+Customer selects package → Stripe Checkout → Stripe webhook confirms payment → Supabase job/payment record is created → customer completes paid intake form → Supabase job record is updated → optional Google Apps Script email notification → Google Sheet pulls job queue data from `/api/jobs-export`.
 
-## Tech stack
-
-- Vite
-- React
-- TypeScript
-- Tailwind CSS
-- Cloudflare Pages
-- Cloudflare Pages Functions
-- Cloudflare KV for durable job storage
-- Stripe Checkout via direct server-side `fetch`
-- Resend or SendGrid email notifications, plus optional Slack webhook notifications
+No AI quoter is included in this version.
 
 ## Local setup
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars
+cp .env.example .dev.vars
 npm run dev
 ```
 
-For full Cloudflare Pages local development with Functions and KV bindings, build first and run Wrangler Pages dev:
+For Cloudflare Pages Functions locally:
 
 ```bash
 npm run build
-npx wrangler pages dev dist --compatibility-date=2024-10-01 --kv=JOBS_KV
+npx wrangler pages dev dist --compatibility-date=2024-10-01
 ```
 
-## Cloudflare Pages deployment
+## Cloudflare Pages
 
-Connect the GitHub repository to Cloudflare Pages.
+- Build command: `npm run build`
+- Build output directory: `dist`
+- Add all secrets/environment variables in Cloudflare Pages project settings.
+- Redeploy after changing variables.
+- Confirm Pages Functions are enabled so `/api/*` routes deploy.
 
-- **Build command:** `npm run build`
-- **Build output directory:** `dist`
-- **Framework preset:** Vite or None
+## Required environment variables
 
-Create a Cloudflare KV namespace for job storage and bind it to the Pages project as `JOBS_KV` in production and preview.
+| Variable | Purpose |
+| --- | --- |
+| `PUBLIC_SITE_URL` | Canonical site URL, for example `https://thomas-jenkins.net`. |
+| `STRIPE_SECRET_KEY` | Server-only Stripe secret key. |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret. |
+| `STRIPE_PRICE_QUICK_FIX` | Stripe Price ID for Quick Fix `$99`. |
+| `STRIPE_PRICE_SPREADSHEET_REPAIR` | Stripe Price ID for Spreadsheet Repair `$249`. |
+| `STRIPE_PRICE_CUSTOM_DASHBOARD_DEPOSIT` | Stripe Price ID for Custom Dashboard/Tracker deposit `$149`. |
+| `STRIPE_PRICE_AUTOMATION_DEPOSIT` | Stripe Price ID for Automation diagnostic deposit `$149`. |
+| `SUPABASE_URL` | Supabase project URL. |
+| `SUPABASE_SECRET_KEY` | Backend-only Supabase service role/secret key. Never expose this in browser code. |
+| `SUPABASE_JOBS_EXPORT_TOKEN` | Strong bearer token for `/api/jobs-export`. |
+| `GOOGLE_APPS_SCRIPT_EMAIL_WEBHOOK_URL` | Optional Apps Script web app URL for Gmail notifications. |
+| `EMAIL_NOTIFICATION_SECRET` | Shared secret sent to the Apps Script email webhook. |
+| `ADMIN_PASSWORD` | Optional bearer token/password for `/admin/jobs` and `/api/admin/jobs`. |
 
-## Required environment variables and bindings
+`PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_PUBLISHABLE_KEY` are not needed for this implementation because all Supabase reads/writes happen server-side.
 
-Set these in Cloudflare Pages **Settings → Environment variables**. Store secrets as encrypted secrets where possible. Do not commit real values.
+## Stripe setup
 
-| Variable / binding | Required | Purpose |
-| --- | --- | --- |
-| `JOBS_KV` | Yes | Cloudflare KV namespace binding used for job/payment/intake records. |
-| `STRIPE_SECRET_KEY` | Yes | Server-only Stripe secret key used by `/api/create-checkout-session`. |
-| `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret used by `/api/stripe-webhook`. |
-| `STRIPE_PRICE_QUICK_FIX` | Yes | Stripe Price ID for Quick Fix ($99). |
-| `STRIPE_PRICE_SPREADSHEET_REPAIR` | Yes | Stripe Price ID for Spreadsheet Repair ($249). |
-| `STRIPE_PRICE_CUSTOM_DEPOSIT` | Yes | Stripe Price ID for Custom Tracker / Dashboard Build deposit ($149). |
-| `STRIPE_PRICE_AUTOMATION_DEPOSIT` | Yes | Stripe Price ID for Automation / Connected Data diagnostic deposit ($149). |
-| `PUBLIC_SITE_URL` | Yes | Canonical site URL, for example `https://thomas-jenkins.net`. |
-| `ADMIN_NOTIFICATION_EMAIL` | Recommended | Admin recipient for job notifications. |
-| `RESEND_API_KEY` or `SENDGRID_API_KEY` | Recommended | Email provider key for admin notifications. |
-| `SLACK_WEBHOOK_URL` | Optional | Sends job/payment notifications to Slack. |
-| `ADMIN_API_TOKEN` | Recommended | Bearer token required by `/api/admin/jobs` and the `/admin/jobs` page. |
-| `STRIPE_SUCCESS_PATH` | Optional | Defaults to `/success`. |
-| `STRIPE_CANCEL_PATH` | Optional | Defaults to `/cancel`. |
-
-## Stripe setup checklist
-
-1. In the Stripe Dashboard, create Prices for:
+1. Create products/prices for the four packages:
    - Quick Fix — `$99`
    - Spreadsheet Repair — `$249`
    - Custom Tracker / Dashboard Build deposit — `$149`
    - Automation / Connected Data diagnostic deposit — `$149`
-2. Copy the four Stripe Price IDs into the Cloudflare environment variables listed above.
-3. Create a Stripe webhook endpoint pointing to:
+2. Add the Stripe Price IDs to Cloudflare using the variable names above.
+3. Add `STRIPE_SECRET_KEY` to Cloudflare secrets.
+4. Create a webhook endpoint pointing to:
 
 ```text
-https://thomas-jenkins.net/api/stripe-webhook
+https://YOUR_DOMAIN/api/stripe-webhook
 ```
 
-4. Subscribe the webhook endpoint to `checkout.session.completed`.
-5. Copy the webhook signing secret into `STRIPE_WEBHOOK_SECRET`.
+5. Subscribe it to `checkout.session.completed`.
+6. Copy the webhook signing secret into `STRIPE_WEBHOOK_SECRET`.
 
-## Checkout, payment, and job flow
+## Supabase setup
 
-1. A customer selects one of the four package cards.
-2. The browser sends only `{ "packageId": "..." }` to `/api/create-checkout-session`.
-3. The Pages Function validates the package and uses the trusted Stripe Price ID from Cloudflare environment variables.
-4. Stripe Checkout receives package metadata: `package_id`, `package_name`, `package_price`, and `package_type`.
-5. Stripe redirects to `/success?session_id={CHECKOUT_SESSION_ID}` after payment.
-6. Stripe also sends `checkout.session.completed` to `/api/stripe-webhook`.
-7. The webhook verifies the Stripe signature using the raw body and `STRIPE_WEBHOOK_SECRET`.
-8. The webhook creates or updates a KV job record idempotently by checkout session ID and marks payment as paid.
-9. The customer submits the intake form on the success page.
-10. `/api/submit-intake` updates the same job record with file/access details, requirements, deadline, scope acknowledgement, and scope-review flags.
-11. Intake submission sends an admin email and/or Slack notification when notification variables are configured.
+1. Create a Supabase project.
+2. Open the Supabase SQL Editor.
+3. Run `supabase/schema.sql`.
+4. Copy `SUPABASE_URL` from project settings.
+5. Create/copy the backend service role or secret key and add it to Cloudflare as `SUPABASE_SECRET_KEY`.
+6. Add a strong random `SUPABASE_JOBS_EXPORT_TOKEN` if using `/api/jobs-export`.
+7. Never expose `SUPABASE_SECRET_KEY` in browser/client-side code.
 
-## Job storage abstraction
+The schema enables RLS and intentionally creates no public policies for jobs, job events, or webhook events. Server-side Cloudflare Functions use `SUPABASE_SECRET_KEY` for trusted writes and private reads.
 
-Job persistence lives behind helper functions in `functions/_lib/jobs.ts`. It currently uses Cloudflare KV through the `JOBS_KV` binding. The same helper boundary can later be moved to D1, Supabase, Neon, or another database without rewriting every API route.
+## Checkout and intake flow
 
-## Admin job queue
+- `POST /api/create-checkout-session` accepts `{ "package_id": "quick_fix" }`.
+- The function validates the package server-side and uses the matching Stripe Price ID from Cloudflare variables.
+- Checkout metadata includes `package_id`, `package_name`, `package_type`, and `expected_amount`.
+- Success URL is `/success?session_id={CHECKOUT_SESSION_ID}`.
+- Cancel URL is `/?checkout=cancelled`.
+- `POST /api/stripe-webhook` verifies the raw Stripe signature, deduplicates via `webhook_events`, upserts the paid job by `stripe_checkout_session_id`, and inserts a `payment_completed` job event.
+- `POST /api/submit-intake` requires a paid Stripe Checkout Session or existing paid Supabase job before updating intake details.
 
-A simple hidden admin route exists at:
+## Scope review guardrails
 
-```text
-/admin/jobs
-```
+If Quick Fix or Spreadsheet Repair intake mentions API, BigQuery, Apps Script, external data, automation, database, dashboard build, multiple files, unclear access, connected sheet, or SQL, the job is marked `needs_scope_review` with `scope_review_required = true`.
 
-It calls:
+## Google Apps Script email hook setup
 
-```text
-GET /api/admin/jobs
-```
+1. Create a new Apps Script project.
+2. Paste `docs/google-apps-script-email-webhook.js`.
+3. Set Script Properties:
+   - `EMAIL_NOTIFICATION_SECRET`
+   - `ADMIN_NOTIFICATION_EMAIL`
+   - `CUSTOMER_CONFIRMATION_FROM_NAME` optional
+4. Deploy as a Web App.
+5. Copy the Web App URL to `GOOGLE_APPS_SCRIPT_EMAIL_WEBHOOK_URL` in Cloudflare.
+6. Add the same `EMAIL_NOTIFICATION_SECRET` to Cloudflare.
 
-If `ADMIN_API_TOKEN` is set, enter that token in the page before loading jobs. The queue displays job ID, created date, customer, package, payment status, intake status, job status, deadline, and a short project description.
+If the email webhook fails, the customer intake still succeeds and a `notification_failed` job event is recorded.
 
-## Scope guardrails
+## Google Sheets job queue setup
 
-If a customer selects Quick Fix or Spreadsheet Repair but intake details mention API work, BigQuery, Apps Script, external data, automation, database work, dashboard builds, multiple files, or unclear requirements, the job is flagged as `Needs Scope Review` and the reasons are included in the admin notification.
+1. Create a Google Sheet.
+2. Open **Extensions > Apps Script**.
+3. Paste `docs/google-sheets-jobs-export.gs`.
+4. Set Script Properties:
+   - `JOBS_EXPORT_URL = https://YOUR_DOMAIN/api/jobs-export`
+   - `JOBS_EXPORT_TOKEN = same value as SUPABASE_JOBS_EXPORT_TOKEN`
+5. Run `refreshJobs()` and approve permissions.
+6. Run `createHourlyTrigger()` if you want hourly refreshes.
 
-## Updating packages and prices
+`GET /api/jobs-export` requires `Authorization: Bearer ${SUPABASE_JOBS_EXPORT_TOKEN}`, reads the private `jobs_sheet_export` Supabase view server-side, supports `status`, `since`, and `limit`, and defaults to 500 rows.
 
-- Frontend cards are defined in `src/main.tsx`.
-- Trusted package metadata is defined in `functions/_lib/packages.ts`.
-- Stripe Price IDs are stored in Cloudflare environment variables.
+## Admin route
 
-When changing prices, update Stripe, Cloudflare variables, frontend display copy, and server-side package metadata.
+`/admin/jobs` is a simple hidden admin page. If `ADMIN_PASSWORD` is set, enter it on the page; the API sends it as a bearer token to `/api/admin/jobs`.
+
+## Updating packages
+
+- Frontend display copy lives in `src/main.tsx`.
+- Server-side package metadata lives in `functions/_lib/packages.ts`.
+- Supabase seed rows live in `supabase/schema.sql`.
+- Stripe Price IDs live in Cloudflare environment variables.
