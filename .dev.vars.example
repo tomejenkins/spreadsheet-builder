@@ -1,5 +1,16 @@
 STRIPE_SECRET_KEY=sk_test_replace_me
+STRIPE_WEBHOOK_SECRET=whsec_replace_me
+STRIPE_PRICE_QUICK_FIX=price_replace_quick_fix_99
+STRIPE_PRICE_SPREADSHEET_REPAIR=price_replace_spreadsheet_repair_249
+STRIPE_PRICE_CUSTOM_DEPOSIT=price_replace_custom_deposit_149
+STRIPE_PRICE_AUTOMATION_DEPOSIT=price_replace_automation_deposit_149
 PUBLIC_SITE_URL=http://localhost:8788
-PUBLIC_INTAKE_FORM_URL=https://example.com/intake-form
+PUBLIC_INTAKE_FORM_URL=http://localhost:8788/success
+ADMIN_NOTIFICATION_EMAIL=you@example.com
+RESEND_API_KEY=re_replace_me
+SENDGRID_API_KEY=SG_replace_me
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/replace/me
+ADMIN_API_TOKEN=replace_with_long_random_token
 STRIPE_SUCCESS_PATH=/success
 STRIPE_CANCEL_PATH=/cancel
+# Cloudflare binding required: JOBS_KV
