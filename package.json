@@ -1,25 +1,8 @@
 {
-  "type": "module",
+  "name": "thomas-jenkins-consulting",
+  "private": true,
+  "version": "1.0.0",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview",
-    "typecheck": "tsc -b"
-  },
-  "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "tailwindcss": "^3.4.17",
-    "postcss": "latest",
-    "autoprefixer": "latest",
-    "lucide-react": "latest"
-  },
-  "devDependencies": {
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "wrangler": "latest"
+    "build": "mkdir -p dist && cp index.html styles.css dist/"
   }
 }
