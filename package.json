@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "build": "mkdir -p dist/demo dist/planner && cp index.html styles.css contact.js dist/ && cp demo/index.html dist/demo/index.html && cp planner/index.html dist/planner/index.html"
+    "build": "mkdir -p dist/demo dist/planner dist/studio && cp index.html styles.css contact.js dist/ && cp demo/index.html dist/demo/index.html && cp planner/index.html dist/planner/index.html && cp studio/index.html dist/studio/index.html && cp planner/engine.mjs planner/scenario.mjs dist/studio/",
+    "test": "node --test planner/engine.test.mjs"
   }
 }

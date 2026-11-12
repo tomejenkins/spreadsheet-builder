@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';import {plan,forecast,backtest} from './engine.mjs';
+const dept=(id,headcount,volume,leadWeeks=3)=>({id,headcount,hours:40,productiveShare:1,absence:0,attrition:0,uph:100,otLimit:8,leadWeeks,volume:Array(8).fill(volume)});
+assert.deepEqual(forecast([100,110,120],2,'trend').map(Math.round),[130,140]);
+assert.deepEqual(forecast([100,110,120],2,'movingAverage'),[110,110]);
+assert.ok(backtest([100,110,120,130,140],'trend').mae<1e-8);
+let r=plan({departments:[dept('A',10,30000,3)],weeks:8});
+assert.equal(r.hires.A,0);assert.equal(r.totals.uncovered,0);
+r=plan({departments:[dept('A',5,30000,3)],weeks:8});
+assert.equal(r.hires.A,3);assert.ok(r.rows[0].otPaid>0);assert.ok(r.rows[0].uncovered>0);
+r=plan({departments:[dept('A',5,30000,3),dept('B',10,10000,3)],transfers:[{from:'B',to:'A',maxPaidHours:40,efficiency:1}],weeks:8});
+assert.ok(r.rows[0].transferIn>0);assert.ok(r.rows[0].uncovered<100);
+assert.throws(()=>plan({departments:[dept('A',1,1000),dept('A',1,1000)]}),/Duplicate/);
+console.log('All workforce engine tests passed');
