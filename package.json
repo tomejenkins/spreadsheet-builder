@@ -3,6 +3,6 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "build": "mkdir -p dist && cp index.html styles.css contact.js dist/"
+    "build": "mkdir -p dist/demo && cp index.html styles.css contact.js dist/ && cp demo/index.html dist/demo/index.html"
   }
 }
