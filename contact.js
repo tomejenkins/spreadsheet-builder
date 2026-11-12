@@ -18,3 +18,9 @@ form?.addEventListener('submit', async (event) => {
     status.textContent = error.message + ' You can also email tom@thomas-jenkins.net directly.';
   } finally { submit.disabled = false; }
 });
+
+// Carry the selected service into the contact form when arriving from the demo.
+const query = new URLSearchParams(window.location.search);
+if (query.get('source') === 'demo' && form?.elements?.service) {
+  form.elements.service.value = 'Reporting & dashboards';
+}
